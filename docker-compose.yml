@@ -1,0 +1,47 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    profiles: ["db"]
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u ${MONGO_INITDB_ROOT_USERNAME} -p ${MONGO_INITDB_ROOT_PASSWORD} --eval 'db.runCommand({ ping: 1 }).ok' | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate_healthcare:
+    build:
+      context: ./migration
+    container_name: migrate_healthcare
+    profiles: ["migrate"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB}
+      MONGO_COLLECTION: ${MONGO_COLLECTION}
+      CSV_PATH: ${CSV_PATH}
+    volumes:
+      - ./data:/data:ro
+    command:
+      [
+        "--csv", "${CSV_PATH}",
+        "--mongo-uri", "${MONGO_URI}",
+        "--db", "${MONGO_DB}",
+        "--collection", "${MONGO_COLLECTION}",
+        "--batch-size", "1000",
+        "--drop"
+      ]
+    restart: "no"
+
+volumes:
+  mongodb_data:
