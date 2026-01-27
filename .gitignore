@@ -1,0 +1,16 @@
+# Environnements et secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Windows
+desktop.ini
