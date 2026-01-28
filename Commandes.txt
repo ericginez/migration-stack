@@ -5,7 +5,8 @@ docker compose up --build --abort-on-container-exit
 docker compose up -d --build
 
 # Démarrage de mongodb seul
-docker compose up -d --build mongodb
+docker compose --profile db up -d
+docker compose --profile migrate up --build
 
 # Lancer le shell mongodb
 docker exec -it mongodb mongosh -u root -p "$env:MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
@@ -20,3 +21,5 @@ Conteneurs en cours:	docker ps
 Tous les conteneurs:	docker ps -a
 Stack Compose:			docker compose ps
 Stoppés uniquement:		docker ps -f status=exited
+
+https://github.com/ericginez/migration-stack.git
