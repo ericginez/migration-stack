@@ -1,145 +1,94 @@
-# Migration de données Healthcare vers MongoDB (Docker Compose)
+# MongoDB Data Migration Stack
 
-## 🎯 Objectif
-Ce projet permet de **déployer MongoDB** et d’**exécuter une migration de données CSV vers MongoDB** à l’aide de **Docker Compose**.
-
-L’architecture suit un pattern Data Engineering standard :
-- un service **MongoDB** (long-running),
-- un service **de migration batch** (one-shot).
+Projet réalisé dans le cadre de la formation **Data Engineer – OpenClassrooms**.  
+L’objectif est de mettre en place une **migration de données industrialisée** vers MongoDB,
+reposant sur **Docker Compose**, un **conteneur batch Python**, des **tests unitaires** et une **CI GitHub Actions**.
 
 ---
 
-## 🧱 Architecture
+## Objectifs du projet
+
+- Déployer une base **MongoDB** de manière reproductible
+- Importer un jeu de données CSV dans MongoDB via un script Python
+- Séparer clairement :
+  - le service de base de données (long-running),
+  - le job de migration (batch / one-shot)
+- Automatiser les tests unitaires
+- Mettre en place une **intégration continue (CI)**
+
+---
+
+## Architecture
+
+Le projet repose sur deux services Docker distincts :
 
 - **MongoDB**
-  - Image officielle `mongo:7`
-  - Données persistées via un volume Docker
-  - Healthcheck intégré
+  - déployé via une image officielle
+  - persistance assurée par un volume Docker
+  - protégé par authentification
+- **Migration Python**
+  - conteneur batch exécuté une seule fois
+  - importe les données CSV
+  - applique des règles de normalisation et de validation
+  - crée les index MongoDB
+  - s’arrête automatiquement après exécution
 
-- **Migration Healthcare**
-  - Image Python construite via un `Dockerfile`
-  - Script de migration CSV → MongoDB
-  - Exécution unique (batch)
-  - Dépend de MongoDB (attente de l’état *healthy*)
+Les services sont orchestrés via **Docker Compose profiles**.
 
 ---
 
-## 📁 Arborescence du projet
+## Arborescence du projet
 
-```text
+```
 migration-stack/
 ├── docker-compose.yml
 ├── .env
+├── Readme.md
 ├── data/
 │   └── healthcare_dataset.csv
-└── migration/
-    ├── Dockerfile
-    ├── requirements.txt
-    └── import_healthcare_dataset_to_mongodb.py
+├── migration/
+│   ├── __init__.py
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── import_healthcare_dataset_to_mongodb.py
+├── unit_tests/
+│   ├── test_convert_type.py
+│   └── test_smoke_import_module.py
+└── .github/
+    └── workflows/
+        └── ci.yml
 ```
 
 ---
 
-## ⚙️ Configuration
+## Pré-requis
 
-### Fichier `.env`
+- Docker ≥ 20.x
+- Docker Compose v2
+- Python ≥ 3.11 (uniquement pour exécuter les tests en local)
 
-```env
-MONGO_INITDB_ROOT_USERNAME=root
-MONGO_INITDB_ROOT_PASSWORD=rootpw
+---
 
-MONGO_URI=mongodb://root:rootpw@mongodb:27017/?authSource=admin
+## Lancement du projet
 
-MONGO_DB=healthcare
-MONGO_COLLECTION=patients
+### Démarrer MongoDB
+```
+docker compose --profile db up -d
+```
 
-CSV_PATH=/data/healthcare_dataset.csv
+### Lancer la migration
+```
+docker compose --profile migrate up --build
+```
+
+### Arrêt
+```
+docker compose down --remove-orphans
 ```
 
 ---
 
-## 🚀 Lancement du projet
-
-### 1️ Démarrer MongoDB
-
-```bash
-docker compose up -d --build mongodb
+## Tests unitaires
 ```
-
-MongoDB :
-- démarre en arrière-plan,
-- devient *healthy* après le healthcheck,
-- conserve les données via un volume Docker.
-
----
-
-### 2️ Lancer la migration de données
-
-```bash
-docker compose run --rm migrate_healthcare
+python -m unittest discover -s unit_tests -p "test_*.py" -v
 ```
-
-La migration effectue :
-- la connexion à MongoDB,
-- la suppression éventuelle de la collection cible,
-- l’import du CSV,
-- la création des index,
-- puis s’arrête automatiquement.
-
----
-
-### 3️ Vérifier l’état des services
-
-```bash
-docker compose ps
-```
-
----
-
-## 🧪 Connexion à MongoDB (optionnel)
-
-MongoDB est exposé sur le port `27017` pour faciliter le debug local.
-
-Depuis la machine hôte :
-
-```bash
-mongosh mongodb://root:rootpw@localhost:27017/?authSource=admin
-```
-
----
-
-## 🧹 Arrêt et nettoyage
-
-### Arrêter les services (sans perdre les données)
-
-```bash
-docker compose down
-```
-
-### Arrêter et supprimer les données MongoDB (⚠️ destructif)
-
-```bash
-docker compose down -v
-```
-
----
-
-## 📝 Notes importantes
-
-- Le service `migrate_healthcare` est un **job batch** :
-  - il s’exécute une fois,
-  - il se termine avec un code de sortie (0 en cas de succès).
-- L’option `--abort-on-container-exit` n’est **pas recommandée** ici.
-- La variable `MONGO_URI` est définie dans `.env` pour éviter toute ambiguïté lors de la substitution Docker Compose.
-
----
-
-## 🧠 Bonnes pratiques appliquées
-
-- Séparation service long-running / batch
-- Healthcheck MongoDB
-- Configuration centralisée dans `.env`
-- Conteneur de migration éphémère
-- Volumes Docker pour la persistance
-
----
