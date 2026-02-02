@@ -7,7 +7,6 @@ __pycache__/
 
 # Docker
 *.log
-commandes.txt
 
 # OS
 .DS_Store
