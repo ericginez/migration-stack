@@ -1,39 +1,108 @@
+# Objectif
+#   1) Démarrer MongoDB (service: mongodb)
+#   2) Importer un CSV dans MongoDB (service: migrate_healthcare)
+#   3) Exécuter des tests d'intégrité après import (service optionnel: integrity_checks)
+#
+# --- Profils ---
+#   - db        : démarre uniquement MongoDB (utile pour du debug)
+#   - migrate   : démarre MongoDB + lance l'import
+#   - integrity : démarre MongoDB + lance l'import + lance les tests d'intégrité
+#
+# --- Commandes usuelles ---
+#   Démarrer uniquement MongoDB en arrière-plan (-d = détaché) :
+#     docker compose --profile db up -d
+#
+#   Lancer l'import (au 1er plan, conseillé pour voir la progression) :
+#     docker compose --profile migrate up --build
+#
+#   Lancer import + intégrité (au 1er plan) :
+#     docker compose --profile integrity up --build
+#
+#   Si l'option -d est utilisée pour migrate / integrity et voulez le résultat après coup :
+#     docker compose ps -a
+#     docker compose logs migrate_healthcare
+#     docker compose logs integrity_checks
+#     docker inspect migrate_healthcare --format "{{json .State}}"
+#     docker inspect integrity_checks  --format "{{json .State}}"
+
 services:
+  # ---------------------------------------------------------------------------
+  # 1) Base de données MongoDB
+  # ---------------------------------------------------------------------------
   mongodb:
     image: mongo:7
     container_name: mongodb
-    profiles: ["db"]
+
+    # Le service mongodb participe à plusieurs profils afin d'être démarré
+    # automatiquement quand on exécute `--profile migrate` ou `--profile integrity`.
+    profiles: ["db", "migrate", "integrity"]
+
+    # Redémarre automatiquement sauf si le conteneur est explicitement stoppé.
     restart: unless-stopped
+
+    # Variables d'init MongoDB : création du compte admin au premier démarrage
+    # (stocké dans le volume mongodb_data).
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+
+    # Exposition du port MongoDB sur la machine hôte
     ports:
       - "27017:27017"
+
+    # Volume persistant pour conserver les données entre redémarrages
     volumes:
       - mongodb_data:/data/db
+
+    # Réduit la verbosité de MongoDB.
+    # Les logs sont redirigés vers /dev/null ; commenter cette section si les logs sont requis.
+    command: ["mongod", "--quiet", "--logpath", "/dev/null"]
+
+    # Healthcheck : permet aux services dépendants d'attendre que MongoDB soit prêt.
+    # Ici : ping authentifié (db.runCommand({ ping: 1 }).ok doit renvoyer 1).
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet -u ${MONGO_INITDB_ROOT_USERNAME} -p ${MONGO_INITDB_ROOT_PASSWORD} --eval 'db.runCommand({ ping: 1 }).ok' | grep 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet -u ${MONGO_INITDB_ROOT_USERNAME} -p ${MONGO_INITDB_ROOT_PASSWORD} --eval 'db.runCommand({ ping: 1 }).ok' | grep 1"
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
 
+  # ---------------------------------------------------------------------------
+  # 2) Migration / import du CSV vers MongoDB
+  # ---------------------------------------------------------------------------
   migrate_healthcare:
+    # Construit l'image à partir du dossier ./migration (Dockerfile + requirements)
     build:
       context: ./migration
+
     container_name: migrate_healthcare
-    profiles: ["migrate"]
+    profiles: ["migrate", "integrity"]
+
+    # Attend que mongodb soit "healthy" avant d'importer
     depends_on:
       mongodb:
         condition: service_healthy
+
+    # Paramètres fournis au script d'import (via variables d'environnement)
     environment:
       MONGO_URI: ${MONGO_URI}
       MONGO_DB: ${MONGO_DB}
       MONGO_COLLECTION: ${MONGO_COLLECTION}
       CSV_PATH: ${CSV_PATH}
+
+    # Le dossier ./data (hôte) est monté en lecture seule dans /data (conteneur).
     volumes:
       - ./data:/data:ro
+
+    # python déjà défini comme runtime dans ENTRYPOINT (.env)
+    # `command:` fournit le script et ses arguments.
+    # Exécute la migration de données
     command:
       [
+        "/app/import_healthcare_dataset_to_mongodb.py",
         "--csv", "${CSV_PATH}",
         "--mongo-uri", "${MONGO_URI}",
         "--db", "${MONGO_DB}",
@@ -41,7 +110,53 @@ services:
         "--batch-size", "1000",
         "--drop"
       ]
+
+    # Tâche "batch" : ne redémarre pas automatiquement une fois terminée.
     restart: "no"
 
+  # ---------------------------------------------------------------------------
+  # 3) Tests d'intégrité (optionnel)
+  # ---------------------------------------------------------------------------
+  integrity_checks:
+    # On réutilise la même image Python (mêmes dépendances) construite depuis ./migration
+    build:
+      context: ./migration
+
+    container_name: integrity_checks
+    profiles: ["integrity"]
+
+    # Attend:
+    #  - que MongoDB soit prêt (healthy)
+    #  - et que la migration ait fini avec succès (exit code 0)
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      migrate_healthcare:
+        condition: service_completed_successfully
+
+    # Paramètres du script d'intégrité
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB}
+      MONGO_COLLECTION: ${MONGO_COLLECTION}
+
+    # python déjà défini comme runtime dans ENTRYPOINT (.env)
+    # `command:` fournit le script et ses arguments.
+    # Génère le rapport et sort avec ExitCode 0.
+    # Si le conteneur/CI doit être configuré pour échouer, ajouter --fail-on-missing, etc...
+    command:
+      [
+        "/app/integrity_checks_mongodb.py",
+        "--mongo-uri", "${MONGO_URI}",
+        "--db", "${MONGO_DB}",
+        "--collection", "${MONGO_COLLECTION}"
+      ]
+
+    # Tâche "batch" : ne redémarre pas automatiquement une fois terminée.
+    restart: "no"
+
+# ---------------------------------------------------------------------------
+# Volume persistant pour MongoDB
+# ---------------------------------------------------------------------------
 volumes:
   mongodb_data:

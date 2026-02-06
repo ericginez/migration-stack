@@ -1,150 +1,156 @@
 # MongoDB Data Migration Stack
 
-Projet réalisé dans le cadre de la formation **Data Engineer – OpenClassrooms**.  
-L’objectif est de mettre en place une **migration de données industrialisée** vers MongoDB,
-reposant sur **Docker Compose**, un **conteneur batch Python**, des **tests unitaires**, des **tests d’intégrité des données**
-et une **intégration continue (CI) via GitHub Actions**.
+## Contexte de la mission
+
+L’objectif est de concevoir une **chaîne complète de migration de données** vers MongoDB, incluant :
+- l’import de données CSV,
+- la validation du code par des tests unitaires automatisés,
+- le contrôle de la qualité des données via des tests d’intégrité.
 
 ---
 
-## Objectifs du projet
+## Objectifs techniques
 
-- Déployer une base **MongoDB** de manière reproductible
-- Importer un jeu de données CSV dans MongoDB via un script Python
-- Séparer clairement :
-  - le service de base de données (long-running),
-  - le job de migration (batch / one-shot)
-- Mettre en place :
-  - des **tests unitaires** (logique métier Python)
-  - des **tests d’intégrité des données** (qualité des données MongoDB)
-- Automatiser l’ensemble via une **CI GitHub Actions**
+- Migrer un jeu de données CSV vers MongoDB de manière fiable et performante
+- Garantir la qualité du code (tests unitaires + CI)
+- Vérifier la qualité des données stockées (tests d’intégrité)
+- Utiliser Docker pour assurer la reproductibilité
+- Fournir une documentation claire et exploitable
 
 ---
 
-## Architecture
+## Architecture du projet
 
-Le projet repose sur deux services Docker distincts :
+Le projet repose sur **trois services Docker distincts**, orchestrés via Docker Compose et des *profiles*.
 
-### MongoDB
-- Déployé via l’image officielle MongoDB
-- Persistance assurée par un volume Docker
+### 1. MongoDB (`mongodb`)
+- Base de données MongoDB
+- Service long-running
 - Authentification activée
-- Healthcheck basé sur une commande `ping` MongoDB
+- Healthcheck MongoDB
+- Persistance via volume Docker
 
-### Migration Python
-- Conteneur batch exécuté une seule fois
-- Importe les données CSV dans MongoDB
-- Applique des règles de normalisation et de typage
-- Crée les index MongoDB
-- S’arrête automatiquement après exécution
+### 2. Migration des données (`migrate_healthcare`)
+- Service batch (one-shot)
+- Exécute le script `import_healthcare_dataset_to_mongodb.py`
+- Rôles :
+  - lecture du CSV par lots
+  - nettoyage et typage des données
+  - insertion performante dans MongoDB
+- S’arrête automatiquement après la migration
 
-Les services sont orchestrés via **Docker Compose profiles** (`db`, `migrate`).
+### 3. Tests d’intégrité (`integrity_checks`)
+- Service batch (one-shot)
+- Exécute le script `integrity_checks_mongodb.py`
+- Vérifie :
+  - valeurs manquantes
+  - types des champs
+  - doublons métier
+  - règles de cohérence (sanity checks)
+- Ne modifie jamais les données
+- Exécuté **hors CI**, à la demande
 
 ---
 
-## Arborescence du projet
+## Arborescence du projet (commentée)
 
-```
+```text
 migration-stack/
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # Pipeline CI GitHub Actions
+├── docker-compose.yml            				# Orchestration Docker des services
+├── .env                          				# Variables d’environnement (MongoDB)
+├── .gitignore                    				# Fichiers exclus du versionnement
+├── README.md                     				# Documentation du projet
 ├── data/
-│   └── healthcare_dataset.csv  # Données source
+│   └── healthcare_dataset.csv    				# Données source CSV
 ├── migration/
-│   ├── __init__.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── import_healthcare_dataset_to_mongodb.py
+│   ├── Dockerfile                				# Image Python (migration + intégrité)
+│   ├── requirements.txt          				# Dépendances Python
+│   ├── import_healthcare_dataset_to_mongodb.py	# Script de migration
+│   ├── integrity_checks_mongodb.py             # Tests d’intégrité
+│   └── __init__.py               				# Déclaration du package Python
 ├── unit_tests/
-│   ├── test_convert_type.py
-│   └── test_smoke_import_module.py
-├── integrity_checks_mongodb.py # Tests d’intégrité des données
-├── docker-compose.yml
-├── .env
-├── .gitignore
-└── README.md
+│   ├── test_convert_type.py      				# Tests unitaires des conversions
+│   └── test_smoke_import_module.py 			# Test de chargement du module
+└── .github/workflows/
+    └── ci.yml                    				# Pipeline CI (tests unitaires)
 ```
-
----
-
-## Pré-requis
-
-- Docker ≥ 20.x
-- Docker Compose v2
-- Python ≥ 3.11 (uniquement pour exécuter les tests en local)
 
 ---
 
 ## Lancement du projet
 
-### Démarrer MongoDB
-```
+### 1️ Démarrer MongoDB
+
+```bash
 docker compose --profile db up -d
 ```
 
-### Lancer la migration
-```
+---
+
+### 2️ Lancer la migration des données
+
+```bash
 docker compose --profile migrate up --build
 ```
 
-### Arrêter les services
+---
+
+### 3️ Lancer les tests d’intégrité (optionnel)
+
+```bash
+docker compose --profile integrity up --build
 ```
+
+Alternative :
+```bash
+docker compose run --rm integrity_checks --build
+```
+
+---
+
+### Arrêter l’environnement
+
+```bash
 docker compose down --remove-orphans
 ```
 
 ---
 
-## Tests unitaires (local)
+## Tests
 
-Les tests unitaires valident la logique Python (conversion de types, normalisation, imports).
+### Tests unitaires (CI)
+- Exécutés automatiquement via GitHub Actions
+- Basés sur le module `unittest`
+- Garantissent la stabilité du code Python
 
-```
-python -m unittest discover -s unit_tests -p "test_*.py" -v
-```
-
----
-
-## Tests d’intégrité des données
-
-Les tests d’intégrité vérifient la **qualité des données stockées dans MongoDB** après ingestion :
-- champs obligatoires présents
-- types de données corrects
-- règles de cohérence simples (sanity checks)
-
-Exécution manuelle :
-```
-python integrity_checks_mongodb.py   --mongo-uri "<MONGO_URI>"   --db "<DB_NAME>"   --collection "<COLLECTION_NAME>"   --fail-on-missing   --fail-on-type   --fail-on-sanity
-```
+### Tests d’intégrité (hors CI)
+- Exécutés manuellement dans un service dédié
+- Dépendent d’une base MongoDB réelle
+- Vérifient la qualité métier des données
 
 ---
 
-## Intégration Continue (CI)
+## CI – GitHub Actions
 
-Le pipeline **GitHub Actions** exécute automatiquement à chaque push ou pull request sur `main` :
+Le pipeline CI :
+- s’exécute à chaque `push` et `pull_request`
+- teste la compatibilité Python 3.11 et 3.12
+- exécute uniquement les tests unitaires
 
-1. Installation de Python
-2. Installation des dépendances
-3. Exécution des tests unitaires
-4. Démarrage d’un service MongoDB
-5. Seed de la base avec un échantillon de données
-6. Exécution des tests d’intégrité en mode strict
-
-Toute anomalie de code ou de données entraîne l’échec du pipeline.
+Les tests d’intégrité sont volontairement exclus de la CI.
 
 ---
 
-## Bonnes pratiques mises en œuvre
+## Choix techniques et justification
 
-- Séparation claire **ETL / tests unitaires / qualité des données**
-- Pipeline CI reproductible
-- Utilisation de Docker pour garantir la portabilité
-- Vérification explicite de la qualité des données
+- **Docker** : reproductibilité et isolation
+- **MongoDB** : base NoSQL adaptée aux données semi-structurées
+- **Tests unitaires** : validation rapide et automatisée
+- **Tests d’intégrité séparés** : contrôle qualité métier réaliste
+- **Profiles Docker Compose** : exécution modulaire et flexible
 
 ---
 
-## Contexte pédagogique
+## Auteur
 
-Ce projet s’inscrit dans le cadre du parcours **Data Engineer OpenClassrooms**  
-et illustre une approche professionnelle de **migration de données**, **data quality**
-et **industrialisation des pipelines**.
+**Eric Ginez**  

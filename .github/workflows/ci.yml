@@ -1,89 +1,89 @@
+# ======================================================================
+# CI GitHub Actions – Version 1.3.0
+# ----------------------------------------------------------------------
+# Ce pipeline CI a pour objectif de :
+#  - vérifier automatiquement la qualité du code Python
+#  - exécuter les tests unitaires à chaque push et pull request
+#  - garantir la non-régression avant une release GitHub
+# ======================================================================
+
 name: CI
 
+# ----------------------------------------------------------------------
+# Déclencheurs du workflow
+# ----------------------------------------------------------------------
+# Le pipeline est lancé automatiquement :
+#  - à chaque push sur le dépôt
+#  - à chaque pull request (demande de fusion)
+# ----------------------------------------------------------------------
 on:
   push:
   pull_request:
 
+# ----------------------------------------------------------------------
+# Définition des jobs CI
+# ----------------------------------------------------------------------
 jobs:
   tests:
+    # Environnement Linux fourni par GitHub Actions
     runs-on: ubuntu-latest
 
-    services:
-      mongodb:
-        image: mongo:6
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })' || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    # ------------------------------------------------------------------
+    # Exécution du même job sur plusieurs versions de Python
+    # Objectif : garantir la compatibilité du code
+    # ------------------------------------------------------------------
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
 
-    env:
-      MONGO_URI: mongodb://localhost:27017
-      MONGO_DB: healthcare
-      MONGO_COLLECTION: patients
-
+    # ------------------------------------------------------------------
+    # Étapes du job
+    # ------------------------------------------------------------------
     steps:
-      # Clone le dépôt GitHub dans la machine GitHub Actions
-      - name: Récupération du code source depuis GitHub
+      # --------------------------------------------------------------
+      # Étape 1 : Récupération du code source
+      # --------------------------------------------------------------
+      # Clone le dépôt GitHub dans l’environnement du runner
+      # --------------------------------------------------------------
+      - name: Récupération du code source
         uses: actions/checkout@v4
-        
-      # Installe et configure les versions de Python demandées
+
+      # --------------------------------------------------------------
+      # Étape 2 : Installation de Python
+      # --------------------------------------------------------------
+      # Installe la version de Python définie dans la matrice
+      # (3.11 puis 3.12)
+      # --------------------------------------------------------------
       - name: Configuration de l’environnement Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Installe toutes les dépendances Python nécessaires au projet
-      - name: Installation des dépendences
+      # --------------------------------------------------------------
+      # Étape 3 : Installation des dépendances Python
+      # --------------------------------------------------------------
+      # - Mise à jour de pip
+      # - Installation des dépendances nécessaires aux tests
+      # --------------------------------------------------------------
+      - name: Installation des dépendances
         run: |
           python -m pip install --upgrade pip
           pip install -r migration/requirements.txt
 
-      # Exécute tous les tests unitaires contenus dans le dossier unit_tests/
-      - name: Tests unitaires
+      # --------------------------------------------------------------
+      # Étape 4 : Exécution des tests unitaires
+      # --------------------------------------------------------------
+      # Lance automatiquement tous les tests :
+      #  - situés dans le dossier unit_tests/
+      #  - dont le nom commence par test_
+      #
+      # Options utilisées :
+      #  - -m unittest        : lance le framework unittest
+      #  - discover           : recherche automatique des tests
+      #  - -s unit_tests      : dossier racine des tests
+      #  - -p "test_*.py"     : filtre de sélection (motif de nommage) des fichiers de tests
+      #  - -v                 : mode verbeux (détail de l'exécution des tests)
+      # --------------------------------------------------------------
+      - name: Exécution des tests unitaires
         run: |
           python -m unittest discover -s unit_tests -p "test_*.py" -v
-
-      # Insérer un jeu de données dans la base afin de permettre l’exécution de tests d’intégrité
-      - name: Charger un échantillon de données limité à 1000 documents
-        run: |
-          python - <<'PY'
-          import csv
-          from pymongo import MongoClient
-          from migration.import_healthcare_dataset_to_mongodb import convert_type
-
-          mongo_uri = "mongodb://localhost:27017"
-          db_name = "healthcare"
-          col_name = "patients"
-
-          client = MongoClient(mongo_uri)
-          col = client[db_name][col_name]
-          col.delete_many({})
-
-          path = "data/healthcare_dataset.csv"
-          docs = []
-          with open(path, newline="", encoding="utf-8") as f:
-              reader = csv.DictReader(f)
-              for i, row in enumerate(reader):
-                  # Keep CI fast: load only a small sample.
-                  if i >= 1000:
-                      break
-                  doc = {k: convert_type(k, v) for k, v in row.items()}
-                  docs.append(doc)
-
-          if docs:
-              col.insert_many(docs, ordered=False)
-
-          print(f"Inserted {len(docs)} documents into {db_name}.{col_name}")
-          PY
-
-      # Vérifier que les données stockées respectent des règles de qualité et de cohérence
-      - name: Tests d'intégrité
-        run: |
-          python integrity_checks_mongodb.py --mongo-uri "${MONGO_URI}" --db "${MONGO_DB}" --collection "${MONGO_COLLECTION}" --fail-on-missing  --fail-on-type --fail-on-sanity
